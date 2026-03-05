@@ -23,6 +23,21 @@ from dotenv import load_dotenv
 import re
 
 
+def encontrar_primeiro_elemento(driver, seletores, timeout=5):
+    """
+    Tenta localizar um elemento por uma lista de seletores (By, valor).
+    Retorna o primeiro elemento encontrado ou None.
+    """
+    for by, valor in seletores:
+        try:
+            return WebDriverWait(driver, timeout).until(
+                EC.presence_of_element_located((by, valor))
+            )
+        except Exception:
+            continue
+    return None
+
+
 def extrair_total_precatorios(driver):
     """
     Extrai o total de precatórios do elemento de paginação.
@@ -34,38 +49,24 @@ def extrair_total_precatorios(driver):
         texto = None
         elemento = None
 
-        # Lista de XPaths e CSS selectors para tentar
-        xpaths = [
-            '//*[@id="resultado"]/div[5]',  # Posição mais comum
-            '//*[@id="resultado"]/div[3]',  # Alternativa
+        seletores_footer = [
+            (
+                By.CSS_SELECTOR,
+                "#resultado > div.ui-datatable-footer.ui-widget-header.ui-corner-bottom",
+            ),
+            (
+                By.XPATH,
+                '//*[@id="resultado"]//div[contains(@class,"ui-datatable-footer")]',
+            ),
+            (By.XPATH, '//*[@id="resultado"]/div[5]'),
+            (By.XPATH, '//*[@id="resultado"]/div[3]'),
         ]
 
-        css_selectors = [
-            "#resultado > div.ui-datatable-footer.ui-widget-header.ui-corner-bottom",
-        ]
-
-        # Tentar XPaths
-        for xpath in xpaths:
-            try:
-                elemento = driver.find_element(By.XPATH, xpath)
-                texto = elemento.text.strip()
-                if texto:
-                    print(f"  ✓ Elemento encontrado em: {xpath}")
-                    break
-            except:
-                continue
-
-        # Tentar CSS selectors se XPath não funcionou
-        if not texto:
-            for css_selector in css_selectors:
-                try:
-                    elemento = driver.find_element(By.CSS_SELECTOR, css_selector)
-                    texto = elemento.text.strip()
-                    if texto:
-                        print(f"  ✓ Elemento encontrado em: {css_selector}")
-                        break
-                except:
-                    continue
+        elemento = encontrar_primeiro_elemento(driver, seletores_footer, timeout=3)
+        if elemento:
+            texto = (elemento.text or "").strip()
+            if texto:
+                print("  ✓ Elemento de paginação encontrado")
 
         if not texto:
             print(f"  ⚠ Elemento de paginação não encontrado")
@@ -289,9 +290,19 @@ def extrair_informacoes_modal(driver):
 
         # Verificar se a mensagem "Ordem Cronológica de Pagamento não disponível" está presente
         try:
-            elemento_mensagem = driver.find_element(
-                By.XPATH, '//*[@id="j_idt23"]/div[1]/ul/li/span'
+            elemento_mensagem = encontrar_primeiro_elemento(
+                driver,
+                [
+                    (By.XPATH, '//*[@id="j_idt23"]/div[1]/ul/li/span'),
+                    (
+                        By.XPATH,
+                        '//*[contains(normalize-space(.),"Ordem Cronológica de Pagamento não disponível nesta consulta!")]',
+                    ),
+                ],
+                timeout=2,
             )
+            if not elemento_mensagem:
+                raise Exception("mensagem não encontrada")
             texto_mensagem = elemento_mensagem.text.strip()
 
             if (
@@ -506,10 +517,25 @@ def extrair_andamento_e_beneficiarios(driver, wait, row_index):
     }
 
     # Primeiro, verificar se o botão de andamento existe
+    linha_local = (row_index % 15) + 1
     try:
-        btn_andamento = driver.find_element(
-            By.XPATH, f'//*[@id="resultado:{row_index}:idAndamento"]'
+        btn_andamento = encontrar_primeiro_elemento(
+            driver,
+            [
+                (By.XPATH, f'//*[@id="resultado:{row_index}:idAndamento"]'),
+                (
+                    By.XPATH,
+                    f'//*[@id="resultado_data"]/tr[{linha_local}]//*[contains(@id,":idAndamento")]',
+                ),
+                (
+                    By.XPATH,
+                    f'//*[@id="resultado_data"]/tr[{linha_local}]//a[contains(translate(normalize-space(.), "ANDAMENTO", "andamento"), "andamento")]',
+                ),
+            ],
+            timeout=3,
         )
+        if not btn_andamento:
+            raise Exception("botão idAndamento não encontrado")
     except:
         print(
             f'    ❌❌❌ ATENÇÃO: LINHA {row_index} NÃO POSSUI BOTÃO idAndamento - XPATH: //*[@id="resultado:{row_index}:idAndamento"] ❌❌❌'
@@ -528,11 +554,23 @@ def extrair_andamento_e_beneficiarios(driver, wait, row_index):
         try:
             # Extrair apenas o elemento j_idt104 (painel principal de detalhes)
             try:
-                painel_detalhes = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located(
-                        (By.XPATH, '//*[@id="frm_detalhe:j_idt91:j_idt104"]')
-                    )
+                painel_detalhes = encontrar_primeiro_elemento(
+                    driver,
+                    [
+                        (By.XPATH, '//*[@id="frm_detalhe:j_idt91:j_idt104"]'),
+                        (
+                            By.XPATH,
+                            '//*[@id="frm_detalhe"]//*[contains(@id,":j_idt104")]',
+                        ),
+                        (
+                            By.XPATH,
+                            '//*[@id="frm_detalhe"]//*[contains(normalize-space(.),"Credor Principal:")]',
+                        ),
+                    ],
+                    timeout=10,
                 )
+                if not painel_detalhes:
+                    raise Exception("painel de detalhes não encontrado")
                 texto_detalhes = painel_detalhes.text.strip()
 
                 # Remover tudo após "=== Observação Importante ===" caso esteja no texto
@@ -561,9 +599,26 @@ def extrair_andamento_e_beneficiarios(driver, wait, row_index):
 
         # Extrair beneficiários
         try:
-            beneficiarios_el = driver.find_element(
-                By.XPATH, '//*[@id="frm_detalhe:j_idt91:crontrol_lblBeneficiario"]'
+            beneficiarios_el = encontrar_primeiro_elemento(
+                driver,
+                [
+                    (
+                        By.XPATH,
+                        '//*[@id="frm_detalhe:j_idt91:crontrol_lblBeneficiario"]',
+                    ),
+                    (
+                        By.XPATH,
+                        '//*[@id="frm_detalhe"]//*[contains(@id,"Beneficiario")]',
+                    ),
+                    (
+                        By.XPATH,
+                        '//*[@id="frm_detalhe"]//*[contains(normalize-space(.),"Beneficiários")]',
+                    ),
+                ],
+                timeout=3,
             )
+            if not beneficiarios_el:
+                raise Exception("bloco de beneficiários não encontrado")
             detalhes["beneficiarios"] = beneficiarios_el.text.strip()
             print(f"    ✓ Beneficiários: {detalhes['beneficiarios'][:100]}")
         except Exception as e:
@@ -571,9 +626,23 @@ def extrair_andamento_e_beneficiarios(driver, wait, row_index):
 
         # Fechar o modal de detalhes para continuar nas outras linhas
         try:
-            btn_fechar = driver.find_element(
-                By.XPATH, '//*[@id="frm_detalhe:j_idt91:j_idt100"]/span'
+            btn_fechar = encontrar_primeiro_elemento(
+                driver,
+                [
+                    (By.XPATH, '//*[@id="frm_detalhe:j_idt91:j_idt100"]/span'),
+                    (
+                        By.CSS_SELECTOR,
+                        "#frm_detalhe a.ui-dialog-titlebar-close, #frm_detalhe span.ui-icon-closethick",
+                    ),
+                    (
+                        By.XPATH,
+                        '//*[@id="frm_detalhe"]//*[contains(@class,"ui-dialog-titlebar-close") or contains(@class,"ui-icon-closethick")]',
+                    ),
+                ],
+                timeout=3,
             )
+            if not btn_fechar:
+                raise Exception("botão fechar modal não encontrado")
             driver.execute_script("arguments[0].click();", btn_fechar)
             print("    ✓ Modal de detalhes fechado")
             time.sleep(1.5)
